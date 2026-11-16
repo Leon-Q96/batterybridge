@@ -55,7 +55,7 @@ static NSString *physicalID(NSDictionary*p){return [NSString stringWithFormat:@"
 @end
 static void reportCallback(void *ctx,IOReturn result,void *sender,IOHIDReportType type,uint32_t rid,uint8_t*p,CFIndex n){
     BBChannel*c=(__bridge BBChannel*)ctx;
-    if(result!=0||n<1||n>512||![ @[@0x10,@0x11,@0x4d,@0xab,@0xf0] containsObject:@(rid)])return;
+    if(result!=0||n<1||n>512||![ @[@0x10,@0x11,@0x4d,@0xab,@0xf0,@0x13] containsObject:@(rid)])return;
     NSDictionary*f=@{@"id":@(rid),@"data":[NSData dataWithBytes:p length:n]};
     if(c.inputHandler)c.inputHandler(f);
     if(c.frames.count<64)[c.frames addObject:f];
@@ -211,10 +211,11 @@ static BOOL mappingEnabled(NSString *identity){return [[BBPreferences() dictiona
         BOOL qhw=(vid==0x3837&&pid==0x1015&&[p[@"Product"] isEqual:@"MCHOSE K87 V3 2.4G"]&&page==0xff80&&usage==1);
         BOOL logitech=(vid==0x046d&&page==0xff00&&usage==1);
         BOOL yjx=(vid==0xa8a5&&pid==0x2255&&page==1&&usage==2&&BBYJXDescriptorMatches((__bridge id)IOHIDDeviceGetProperty(dev,CFSTR("ReportDescriptor"))));
-        if(!qhw&&!logitech&&!yjx)continue;
+        BOOL compx=(vid==0x3554&&pid==0xfa09&&page==0xff02&&usage==2&&BBCompxDescriptorMatches((__bridge id)IOHIDDeviceGetProperty(dev,CFSTR("ReportDescriptor"))));
+        if(!qhw&&!logitech&&!yjx&&!compx)continue;
         NSString*physical=physicalID(p);if([seen containsObject:physical])continue;[seen addObject:physical];
-        NSString*name=qhw?@"MCHOSE K87 V3":(yjx?@"USB Receiver (YJX)":p[@"Product"]?:@"Logitech Receiver");
-        if(qhw)[self remember:logicalID(physical,0) physical:physical name:name category:@"Keyboard"];
+        NSString*name=qhw?@"MCHOSE K87 V3":(compx?@"AULA F75":(yjx?@"USB Receiver (YJX)":p[@"Product"]?:@"Logitech Receiver"));
+        if(qhw||compx)[self remember:logicalID(physical,0) physical:physical name:name category:@"Keyboard"];
         BOOL targeted=NO;for(NSString*identity in targets)if([identity hasPrefix:[NSString stringWithFormat:@"local.batterybridge.%@.",physical]]){targeted=YES;break;}
         if(yjx){
             if(!_yjxDiagnostics[physical])_yjxDiagnostics[physical]=[NSMutableDictionary new];
@@ -261,7 +262,12 @@ static BOOL mappingEnabled(NSString *identity){return [[BBPreferences() dictiona
         if(!due&&!targeted)continue;
         BBChannel*c=[[BBChannel alloc]initWithDevice:dev];
         if(![c open]){_errors[physical]=[NSString stringWithFormat:@"设备访问被拒绝 %@；请检查输入监控权限",errorText(c.lastError)];continue;}
-        if(qhw){
+        if(compx){
+            __block NSDictionary*reading=nil;
+            [c exchange:0x13 payload:BBCompxQuery() matching:^BOOL(NSDictionary*f){reading=BBCompxDecode(f[@"data"],[f[@"id"] intValue]);return reading!=nil;}];
+            if(reading){[self storeReading:reading physical:physical slot:0 name:name category:@"Keyboard"];[_errors removeObjectForKey:physical];}
+            else _errors[physical]=@"未收到 AULA 电量回复；键盘可能未切到 2.4G 档或处于休眠";
+        }else if(qhw){
             uint8_t seq=arc4random_uniform(256);__block NSDictionary*reading=nil;
             [c exchange:0x4d payload:BBQHWQuery(seq) matching:^BOOL(NSDictionary*f){reading=BBQHWDecode(f[@"data"],[f[@"id"] intValue],seq);return reading!=nil;}];
             if(reading){[self storeReading:reading physical:physical slot:0 name:name category:@"Keyboard"];[_errors removeObjectForKey:physical];}

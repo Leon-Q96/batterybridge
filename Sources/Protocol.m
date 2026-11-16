@@ -60,3 +60,34 @@ NSDictionary *BBLogitechDecodeBattery(NSData *payload,uint16_t feature) {
     if(feature==0x1000&&p[0]==0)return nil;
     return @{@"percent":@(p[0]),@"charging":@(p[2]==1||p[2]==2),@"full":@(p[2]==3),@"approximate":@NO};
 }
+
+// ---- AULA F75 (Compx receiver 3554:FA09) ----
+// Report 0x13, 20 bytes: id, command, body, and a checksum that is the byte sum
+// of the nineteen bytes before it. The battery question is command 0x4A with an
+// empty body; the answer echoes it (high bit sometimes set) with the level at
+// byte 5 and the power state at byte 6: 0x01 on battery, 0x10 on its cable.
+BOOL BBCompxDescriptorMatches(NSData *descriptor) {
+    const uint8_t vendor[]={0x06,0x02,0xff,0x09,0x02,0xa1,0x01,0x85,0x13};
+    if(![descriptor isKindOfClass:NSData.class])return NO;
+    return [descriptor rangeOfData:[NSData dataWithBytes:vendor length:sizeof vendor] options:0 range:NSMakeRange(0,descriptor.length)].location!=NSNotFound;
+}
+NSData *BBCompxQuery(void) {
+    uint8_t body[19]={0};body[0]=0x4a;
+    unsigned sum=0x13;for(NSUInteger i=0;i<18;i++)sum+=body[i];
+    body[18]=(uint8_t)(sum&0xff);
+    return [NSData dataWithBytes:body length:sizeof body];
+}
+NSDictionary *BBCompxDecode(NSData *report,uint8_t rid) {
+    if(rid!=0x13||![report isKindOfClass:NSData.class])return nil;
+    uint8_t frame[20];const uint8_t *p=report.bytes;NSUInteger n=report.length;
+    if(n>=20&&p[0]==0x13)memcpy(frame,p,20);
+    else if(n>=19){frame[0]=0x13;memcpy(frame+1,p,19);}
+    else return nil;
+    unsigned sum=0;for(NSUInteger i=0;i<19;i++)sum+=frame[i];
+    if((uint8_t)(sum&0xff)!=frame[19])return nil;
+    if((frame[1]&0x7f)!=0x4a)return nil;
+    uint8_t level=frame[5],state=frame[6];
+    if(state==0x10)return @{@"percent":@100,@"charging":@YES,@"full":@NO,@"approximate":@NO,@"pinned":@YES};
+    if(state!=0x01||level<1||level>100)return nil;
+    return @{@"percent":@(level),@"charging":@NO,@"full":@(level>=100),@"approximate":@NO};
+}

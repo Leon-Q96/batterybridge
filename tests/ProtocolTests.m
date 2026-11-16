@@ -35,5 +35,24 @@ require(!BBYJXDescriptorMatches([NSData data])&&!BBYJXDescriptorMatches(nil),@"s
 q=BBYJXBatteryQuery();b=q.bytes;uint8_t expected[]={0x30,0xa5,0x0b,0x2e,1,1,1,0,0};
 require(q.length==63&&!memcmp(b,expected,sizeof expected),@"F0 battery query matches documented read-only command");
 BOOL padding=YES;for(NSUInteger i=sizeof expected;i<q.length;i++)padding=padding&&b[i]==0;require(padding,@"battery request contains no trailing configuration data");
-printf("PASS: 29 protocol checks\n");
+// AULA F75 on the Compx receiver (3554:FA09): report 0x13, command 0x4A.
+q=BBCompxQuery();b=q.bytes;require(q.length==19&&b[0]==0x4a&&b[18]==0x5d,@"Compx battery request framing and checksum");
+uint8_t au[]={0x13,0x4a,0x01,0x00,0x02,0x64,0x01,0,0,0,0,0,0,0,0,0,0,0,0,0};
+au[19]=0;for(int i=0;i<19;i++)au[19]+=au[i];
+d=BBCompxDecode([NSData dataWithBytes:au length:sizeof au],0x13);require([d[@"percent"] intValue]==100&&![d[@"charging"] boolValue]&&[d[@"full"] boolValue],@"AULA level on 2.4 GHz");
+au[5]=0x61;au[19]=0;for(int i=0;i<19;i++)au[19]+=au[i];
+d=BBCompxDecode([NSData dataWithBytes:au length:sizeof au],0x13);require([d[@"percent"] intValue]==97,@"AULA reported level is used as-is");
+au[5]=0x64;au[6]=0x10;au[19]=0;for(int i=0;i<19;i++)au[19]+=au[i];
+d=BBCompxDecode([NSData dataWithBytes:au length:sizeof au],0x13);require([d[@"charging"] boolValue],@"AULA cable state is charging");
+au[19]^=1;require(!BBCompxDecode([NSData dataWithBytes:au length:sizeof au],0x13),@"AULA rejects bad checksum");
+au[6]=0x01;au[5]=0;au[19]=0;for(int i=0;i<19;i++)au[19]+=au[i];
+require(!BBCompxDecode([NSData dataWithBytes:au length:sizeof au],0x13),@"AULA rejects an impossible level");
+au[5]=0x64;au[6]=0x02;au[19]=0;for(int i=0;i<19;i++)au[19]+=au[i];
+require(!BBCompxDecode([NSData dataWithBytes:au length:sizeof au],0x13),@"AULA rejects an unseen power state");
+require(!BBCompxDecode([NSData dataWithBytes:au length:sizeof au],0x12),@"AULA ignores other report ids");
+require(!BBCompxDecode([NSData dataWithBytes:au length:4],0x13),@"AULA rejects truncated report");
+uint8_t compxDescriptorBytes[]={0x06,0x02,0xff,0x09,0x02,0xa1,0x01,0x85,0x13,0x15,0x00,0x26,0xff,0x00,0x75,0x08,0x95,0x13,0x09,0x02,0x81,0x00,0x09,0x02,0x91,0x00,0xc0};
+require(BBCompxDescriptorMatches([NSData dataWithBytes:compxDescriptorBytes length:sizeof compxDescriptorBytes]),@"Compx receiver collection is recognised");
+require(!BBCompxDescriptorMatches(descriptor)&&!BBCompxDescriptorMatches(nil),@"unrelated vendor collections are refused");
+printf("PASS: 37 protocol checks\n");
 }}
